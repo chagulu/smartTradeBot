@@ -1,6 +1,8 @@
 from flask import Flask, jsonify
+from flask_migrate import Migrate
 
 from smart_trade_bot.config import Config
+from smart_trade_bot.database import db
 from smart_trade_bot.storage import Storage
 from smart_trade_bot.auth import create_auth_blueprint
 from smart_trade_bot.strategy_engine import create_strategy_blueprint, EMAConditionalStrategyEngine
@@ -12,6 +14,13 @@ from smart_trade_bot.worker import WorkerEngine
 def create_app():
     app = Flask(__name__)
     app.config["SECRET_KEY"] = Config.FLASK_SECRET_KEY
+    app.config["SQLALCHEMY_DATABASE_URI"] = Config.SQLALCHEMY_DATABASE_URI
+    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = Config.SQLALCHEMY_TRACK_MODIFICATIONS
+
+    # Initialize Database and Migrations
+    db.init_app(app)
+    import smart_trade_bot.models  # Required for Alembic to detect the schema
+    migrate = Migrate(app, db)
 
     storage = Storage(Config.DATABASE_PATH)
     storage.init_db()
@@ -36,4 +45,4 @@ def create_app():
 
 if __name__ == "__main__":
     application = create_app()
-    application.run(host="0.0.0.0", port=5000, debug=True)
+    application.run(host="0.0.0.0", port=5001, debug=True)
