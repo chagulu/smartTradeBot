@@ -1,0 +1,107 @@
+```gitignore
+# ==========================
+# Python
+# ==========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual Environment
+venv/
+.env/
+.env.*
+
+# ==========================
+# Flask
+# ==========================
+instance/
+.webassets-cache
+flask_session/
+
+# Environment Variables
+.env
+
+# ==========================
+# Database
+# ==========================
+*.db
+*.sqlite
+*.sqlite3
+
+# SQL dumps
+*.sql
+
+# ==========================
+# Logs
+# ==========================
+logs/
+*.log
+
+# ==========================
+# IDE / Editors
+# ==========================
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# ==========================
+# Pytest / Coverage
+# ==========================
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ==========================
+# Build / Distribution
+# ==========================
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ==========================
+# Jupyter
+# ==========================
+.ipynb_checkpoints/
+
+# ==========================
+# MyPy / Type Checking
+# ==========================
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ==========================
+# Alembic Migrations
+# (Keep versions if shared)
+# ==========================
+# migrations/
+
+# ==========================
+# SmartTradeBot Sensitive Files
+# ==========================
+.env
+.env.local
+.env.production
+
+# Zerodha credentials backup files
+credentials.json
+tokens.json
+access_tokens.json
+
+# Strategy execution runtime files
+scheduler.lock
+worker.pid
+
+# Local storage files
+storage.db
+smarttradebot.db
+
+# OS files
+Thumbs.db
+.DS_Store
+```
