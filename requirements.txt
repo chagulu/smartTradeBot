@@ -1,0 +1,4 @@
+Flask>=2.0
+KiteConnect>=4.0
+APScheduler>=3.9
+requests>=2.28
