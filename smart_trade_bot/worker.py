@@ -1,21 +1,19 @@
-from apscheduler.schedulers.background import BackgroundScheduler
-
+import threading
+import time
 
 class WorkerEngine:
     def __init__(self, strategy_engine, interval_seconds=15):
-        self.strategy_engine = strategy_engine
-        self.interval_seconds = interval_seconds
-        self.scheduler = BackgroundScheduler()
+        self.engine = strategy_engine
+        self.interval = interval_seconds
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.running = False
 
     def start(self):
-        self.scheduler.add_job(
-            self.strategy_engine.evaluate_active_strategies,
-            trigger="interval",
-            seconds=self.interval_seconds,
-            id="strategy_evaluator",
-            replace_existing=True,
-        )
-        self.scheduler.start()
+        self.running = True
+        self.thread.start()
 
-    def shutdown(self):
-        self.scheduler.shutdown(wait=False)
+    def _run(self):
+        while self.running:
+            print(f"Worker heartbeat: Executing strategies at {time.ctime()}")
+            self.engine.run_all()
+            time.sleep(self.interval)
