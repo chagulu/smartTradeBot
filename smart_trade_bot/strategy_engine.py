@@ -1,155 +1,297 @@
 from datetime import datetime
 from flask import Blueprint, request, jsonify
-from smart_trade_bot.models import EMAStrategy, ExecutionLog, db
-import math
+
+from smart_trade_bot.models import (
+    ConditionalOrder,
+    EmaStrategy,
+    Execution,
+    Position,
+    db,
+)
+
+
+DEFAULT_PROFIT_TARGETS = (0.10, 0.20, 0.30)
+DEFAULT_STOP_LOSS_PERCENT = 0.15
+VALID_CONDITIONS = {"PRICE_ABOVE", "PRICE_BELOW", "EMA_ABOVE", "EMA_BELOW"}
+VALID_ACTIONS = {"BUY", "SELL"}
+
 
 class EMAConditionalStrategyEngine:
     def __init__(self, market_data, order_executor, storage):
         self.market_data = market_data
-        self.executor = order_executor
+        self.order_executor = order_executor
         self.storage = storage
 
-    def run_all(self):
-        active_strategies = EMAStrategy.query.filter_by(is_active=True, status="ACTIVE").all()
-        for strategy in active_strategies:
-            self.process_strategy(strategy)
+    def run_cycle(self):
+        """Main evaluation loop called by the worker."""
+        # 1. Evaluate standalone conditional orders
+        conditional_orders = ConditionalOrder.query.filter_by(status="WAITING").all()
+        for order in conditional_orders:
+            self._evaluate_conditional_order(order)
 
-    def process_strategy(self, strategy):
-        try:
-            current_price = self.market_data.get_ltp(strategy.symbol)
-            now = datetime.now()
-            
-            # 1. Evaluate Buy Condition
-            self.evaluate_buy(strategy, current_price, now)
-            
-            # 2. Evaluate Sell/Exit Conditions (only if position exists)
-            if strategy.current_position_quantity > 0:
-                self.evaluate_exit(strategy, current_price)
-                
-        except Exception as e:
-            print(f"Error processing {strategy.symbol}: {e}")
+        # 2. Evaluate EMA Strategies
+        strategies = EmaStrategy.query.filter_by(status="ACTIVE").all()
+        for strategy in strategies:
+            self._evaluate_strategy(strategy)
 
-    def evaluate_buy(self, strategy, current_price, now):
-        # Condition: Time Window
-        start_time = datetime.strptime(strategy.buy_time_start, "%H:%M").time()
-        end_time = datetime.strptime(strategy.buy_time_end, "%H:%M").time()
-        
-        if not (start_time <= now.time() <= end_time):
+        # 3. Check Positions for Profit Booking / Stop Loss
+        positions = Position.query.filter(Position.quantity > 0).all()
+        for pos in positions:
+            self._manage_exit_strategy(pos)
+
+    def _evaluate_conditional_order(self, order):
+        if not self._condition_matches(order):
             return
 
-        # Condition: EMA Logic (Daily candle close below EMA)
-        ema_val, last_close = self.market_data.get_ema(strategy.symbol, strategy.ema_period)
-        if last_close < ema_val:
-            # Risk limit check
-            if strategy.current_position_quantity >= strategy.max_position_size:
+        order.status = "TRIGGERED"
+        db.session.commit()
+
+        order_id = self.order_executor.place_order(
+            order.symbol,
+            order.action,
+            order.quantity,
+        )
+
+        if not order_id:
+            order.status = "FAILED"
+            db.session.commit()
+            return
+
+        price = self.market_data.get_ltp(order.symbol) or order.trigger_price or 0
+        self._record_execution(
+            order_id=order.id,
+            symbol=order.symbol,
+            action=order.action,
+            quantity=order.quantity,
+            price=price,
+            kite_order_id=order_id,
+        )
+
+        if order.action == "BUY":
+            self._update_position_after_buy(order, price, order_id)
+        else:
+            self._update_position_after_sell(order.user_id, order.symbol, order.quantity)
+
+        order.status = "EXECUTED"
+        order.executed_at = datetime.utcnow()
+        db.session.commit()
+
+    def _condition_matches(self, order):
+        condition = order.condition_type.upper()
+        if condition not in VALID_CONDITIONS:
+            order.status = "FAILED"
+            db.session.commit()
+            return False
+
+        ltp = self.market_data.get_ltp(order.symbol)
+        if ltp is None:
+            return False
+
+        if condition == "PRICE_ABOVE":
+            return order.trigger_price is not None and ltp > order.trigger_price
+        if condition == "PRICE_BELOW":
+            return order.trigger_price is not None and ltp < order.trigger_price
+
+        ema_period = order.ema_period or 100
+        ema = self.market_data.get_ema(order.symbol, ema_period)
+        if ema is None:
+            return False
+
+        if condition == "EMA_ABOVE":
+            return ltp > ema
+        return ltp < ema
+
+    def _evaluate_strategy(self, strategy):
+        now = datetime.now()
+        current_time_str = now.strftime("%H:%M")
+        
+        # EMA Entry Logic (Section 10)
+        if strategy.buy_time_start <= current_time_str <= strategy.buy_time_end:
+            ltp = self.market_data.get_ltp(strategy.symbol)
+            ema = self.market_data.get_ema(strategy.symbol, strategy.ema_period)
+            
+            if ltp and ema and ltp < ema:
+                print(f"EMA Entry Triggered for {strategy.symbol}: Price {ltp} < EMA {ema}")
+                order_id = self.order_executor.place_order(strategy.symbol, "BUY", strategy.quantity)
+                if order_id:
+                    self._update_position_after_buy(strategy, ltp, order_id)
+                    self._record_execution(
+                        order_id=strategy.id,
+                        symbol=strategy.symbol,
+                        action="BUY",
+                        quantity=strategy.quantity,
+                        price=ltp,
+                        kite_order_id=order_id,
+                    )
+                    db.session.commit()
+
+    def _manage_exit_strategy(self, pos):
+        ltp = self.market_data.get_ltp(pos.symbol)
+        if not ltp:
+            return
+
+        # Stop Loss Logic (Section 14)
+        sl_price = pos.average_price * (1 - DEFAULT_STOP_LOSS_PERCENT)
+        if ltp <= sl_price:
+            print(f"STOP LOSS HIT for {pos.symbol}")
+            order_id = self.order_executor.place_order(pos.symbol, "SELL", pos.quantity)
+            if order_id:
+                quantity = pos.quantity
+                self._record_execution(
+                    order_id=pos.id,
+                    symbol=pos.symbol,
+                    action="SELL",
+                    quantity=quantity,
+                    price=ltp,
+                    stage=0,
+                    kite_order_id=order_id,
+                )
+                self._update_position_after_sell(pos.user_id, pos.symbol, quantity)
+                db.session.commit()
+            return
+
+        executed_stages = {
+            row.stage
+            for row in Execution.query.filter_by(
+                order_id=pos.id,
+                symbol=pos.symbol,
+                action="SELL",
+            ).all()
+            if row.stage
+        }
+
+        for stage, target in enumerate(DEFAULT_PROFIT_TARGETS, start=1):
+            if stage in executed_stages:
+                continue
+
+            target_price = pos.average_price * (1 + target)
+            if ltp < target_price:
+                continue
+
+            quantity = pos.quantity if stage == 3 else max(1, pos.quantity // 2)
+            order_id = self.order_executor.place_order(pos.symbol, "SELL", quantity)
+            if not order_id:
                 return
-                
-            # Calculate quantity to buy (This example buys 10% of max per signal)
-            qty_to_buy = 10 # Example fixed increment
-            
-            order_id = self.executor.place_buy_order(strategy.symbol, qty_to_buy)
-            self.update_position_after_buy(strategy, qty_to_buy, current_price, order_id)
 
-    def update_position_after_buy(self, strategy, qty, price, order_id):
-        old_total = strategy.current_position_quantity * strategy.current_position_avg_price
-        new_qty = strategy.current_position_quantity + qty
-        new_avg = (old_total + (qty * price)) / new_qty
-        
-        strategy.current_position_quantity = new_qty
-        strategy.current_position_avg_price = new_avg
-        strategy.total_buy_orders += 1
-        strategy.last_activity_at = datetime.utcnow()
-        
-        log = ExecutionLog(strategy_id=strategy.id, action="BUY", symbol=strategy.symbol, 
-                           quantity=qty, price=price, broker_order_id=order_id)
-        db.session.add(log)
-        db.session.commit()
-
-    def evaluate_exit(self, strategy, current_price):
-        avg = strategy.current_position_avg_price
-        qty = strategy.current_position_quantity
-
-        # Stop Loss
-        if current_price <= avg * (1 - strategy.stop_loss_percent):
-            self.execute_sell(strategy, qty, current_price, "STOP_LOSS")
-            strategy.status = "PAUSED" # Pause strategy after SL as per spec
+            self._record_execution(
+                order_id=pos.id,
+                symbol=pos.symbol,
+                action="SELL",
+                quantity=quantity,
+                price=ltp,
+                stage=stage,
+                kite_order_id=order_id,
+            )
+            self._update_position_after_sell(pos.user_id, pos.symbol, quantity)
+            db.session.commit()
             return
 
-        # Stage 3: Avg + 30% (Sell Remaining)
-        if not strategy.stage_3_completed and current_price >= avg * (1 + strategy.stage_3_profit_percent):
-            self.execute_sell(strategy, qty, current_price, "STAGE_3")
-            strategy.stage_3_completed = True
-            strategy.status = "COMPLETED"
+    def _update_position_after_buy(self, strategy, price, kite_id):
+        user_id = getattr(strategy, "user_id", 1)
+        symbol = strategy.symbol
+        quantity = strategy.quantity
+
+        position = Position.query.filter_by(user_id=user_id, symbol=symbol).first()
+        if not position:
+            position = Position(user_id=user_id, symbol=symbol, quantity=0)
+            db.session.add(position)
+
+        current_quantity = position.quantity or 0
+        current_invested = position.invested_amount or 0
+        buy_value = price * quantity
+        new_quantity = current_quantity + quantity
+        new_invested = current_invested + buy_value
+
+        position.quantity = new_quantity
+        position.invested_amount = new_invested
+        position.average_price = new_invested / new_quantity if new_quantity else 0
+        position.current_pnl = 0
+
+    def _update_position_after_sell(self, user_id, symbol, quantity):
+        position = Position.query.filter_by(user_id=user_id, symbol=symbol).first()
+        if not position:
             return
 
-        # Stage 2: Avg + 20% (Sell 50% of remaining)
-        if not strategy.stage_2_completed and current_price >= avg * (1 + strategy.stage_2_profit_percent):
-            sell_qty = math.floor(qty * 0.5)
-            self.execute_sell(strategy, sell_qty, current_price, "STAGE_2")
-            strategy.stage_2_completed = True
-            return
+        sell_quantity = min(quantity, position.quantity or 0)
+        remaining_quantity = (position.quantity or 0) - sell_quantity
+        position.quantity = remaining_quantity
+        position.invested_amount = position.average_price * remaining_quantity
+        if remaining_quantity == 0:
+            position.average_price = 0
+            position.current_pnl = 0
 
-        # Stage 1: Avg + 10% (Sell 50% of total)
-        if not strategy.stage_1_completed and current_price >= avg * (1 + strategy.stage_1_profit_percent):
-            sell_qty = math.floor(qty * 0.5)
-            self.execute_sell(strategy, sell_qty, current_price, "STAGE_1")
-            strategy.stage_1_completed = True
-            return
-
-    def execute_sell(self, strategy, qty, price, remarks):
-        order_id = self.executor.place_sell_order(strategy.symbol, qty)
-        strategy.current_position_quantity -= qty
-        strategy.total_sell_orders += 1
-        
-        if strategy.current_position_quantity == 0:
-            strategy.current_position_avg_price = 0
-            
-        log = ExecutionLog(strategy_id=strategy.id, action="SELL", symbol=strategy.symbol, 
-                           quantity=qty, price=price, broker_order_id=order_id, remarks=remarks)
-        db.session.add(log)
-        db.session.commit()
+    def _record_execution(
+        self,
+        order_id,
+        symbol,
+        action,
+        quantity,
+        price,
+        kite_order_id,
+        stage=None,
+    ):
+        execution = Execution(
+            order_id=order_id,
+            symbol=symbol,
+            action=action,
+            quantity=quantity,
+            price=price,
+            stage=stage,
+            kite_order_id=kite_order_id,
+        )
+        db.session.add(execution)
 
 def create_strategy_blueprint(engine, storage):
     bp = Blueprint("strategy", __name__)
 
-    @bp.route("/activate", methods=["POST"])
-    def activate():
-        data = request.json
-        strat = EMAStrategy(
-            user_id=1, # Hardcoded for default user
-            symbol=data['symbol'],
-            ema_period=data.get('ema_period', 100),
-            status="ACTIVE",
-            is_active=True
-        )
-        db.session.add(strat)
-        db.session.commit()
-        return jsonify({"message": "strategy_activated", "strategy_id": strat.id})
-
-    @bp.route("/deactivate", methods=["POST"])
-    def deactivate():
-        strat_id = request.json.get("strategy_id")
-        strat = EMAStrategy.query.get(strat_id)
-        if strat:
-            strat.is_active = False
-            strat.status = "STOPPED"
-            db.session.commit()
-        return jsonify({"message": "strategy_deactivated", "strategy_id": strat_id})
-
     @bp.route("/status", methods=["GET"])
     def status():
-        strats = EMAStrategy.query.filter_by(is_active=True).all()
-        output = []
-        for s in strats:
-            output.append({
+        active = EmaStrategy.query.filter_by(status="ACTIVE").all()
+        return jsonify({
+            "active_strategies": [{
                 "id": s.id,
                 "symbol": s.symbol,
                 "ema_period": s.ema_period,
-                "quantity": s.current_position_quantity,
-                "avg_price": s.current_position_avg_price,
+                "quantity": s.quantity,
+                "profit_targets": [
+                    s.stage_1_profit_percent,
+                    s.stage_2_profit_percent,
+                    s.stage_3_profit_percent,
+                ],
+                "stop_loss": s.stop_loss_percent,
                 "status": s.status,
-                "stages": [s.stage_1_completed, s.stage_2_completed, s.stage_3_completed]
-            })
-        return jsonify({"active_strategies": output})
+            } for s in active]
+        })
+
+    @bp.route("/activate", methods=["POST"])
+    def activate():
+        data = request.json
+        new_strat = EmaStrategy(
+            user_id=1, # Mocked for now
+            symbol=data['symbol'].upper(),
+            ema_period=data.get('ema_period', 100),
+            quantity=data['quantity'],
+            stage_1_profit_percent=data.get("stage_1_profit_percent", 0.10),
+            stage_2_profit_percent=data.get("stage_2_profit_percent", 0.20),
+            stage_3_profit_percent=data.get("stage_3_profit_percent", 0.30),
+            stop_loss_percent=data.get("stop_loss_percent", 0.15),
+        )
+        db.session.add(new_strat)
+        db.session.commit()
+        return jsonify({"message": "strategy_activated", "strategy_id": new_strat.id})
+
+    @bp.route("/deactivate", methods=["POST"])
+    def deactivate():
+        data = request.get_json() or {}
+        strategy = EmaStrategy.query.get(data.get("strategy_id"))
+        if not strategy:
+            return jsonify({"error": "strategy_not_found"}), 404
+
+        strategy.status = "INACTIVE"
+        db.session.commit()
+        return jsonify({
+            "message": "strategy_deactivated",
+            "strategy_id": strategy.id,
+        })
 
     return bp

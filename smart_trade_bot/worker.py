@@ -1,19 +1,38 @@
-import threading
 import time
+import threading
+from datetime import datetime
 
 class WorkerEngine:
-    def __init__(self, strategy_engine, interval_seconds=15):
-        self.engine = strategy_engine
+    def __init__(self, engine, interval_seconds=15):
+        self.engine = engine
         self.interval = interval_seconds
-        self.thread = threading.Thread(target=self._run, daemon=True)
         self.running = False
+        self._thread = None
+        self.last_execution_time = None
+
+    def _run_loop(self):
+        while self.running:
+            try:
+                print(f"[{datetime.now()}] Worker executing cycle...")
+                self.engine.run_cycle()
+                self.last_execution_time = datetime.now()
+            except Exception as e:
+                print(f"Worker cycle error: {e}")
+            time.sleep(self.interval)
 
     def start(self):
-        self.running = True
-        self.thread.start()
+        if not self.running:
+            self.running = True
+            self._thread = threading.Thread(target=self._run_loop, daemon=True)
+            self._thread.start()
+            print("Worker Engine started.")
 
-    def _run(self):
-        while self.running:
-            print(f"Worker heartbeat: Executing strategies at {time.ctime()}")
-            self.engine.run_all()
-            time.sleep(self.interval)
+    def status(self):
+        return {
+            "running": self.running,
+            "last_execution_time": (
+                self.last_execution_time.isoformat()
+                if self.last_execution_time else None
+            ),
+            "interval_seconds": self.interval,
+        }

@@ -1,3 +1,5 @@
+import os
+
 from flask import Flask, jsonify
 from flask_migrate import Migrate
 from flask_cors import CORS
@@ -6,6 +8,7 @@ from smart_trade_bot.config import Config
 from smart_trade_bot.database import db
 from smart_trade_bot.storage import Storage
 from smart_trade_bot.auth import create_auth_blueprint
+from smart_trade_bot.api import create_api_blueprint
 from smart_trade_bot.strategy_engine import (
     create_strategy_blueprint,
     EMAConditionalStrategyEngine
@@ -47,52 +50,63 @@ def create_app():
     # Initialize Storage
     storage = Storage(Config.DATABASE_PATH)
     storage.init_db()
+    worker = None
 
-    # Initialize Zerodha Components
-    access_token = storage.get_access_token("default")
-
-    kite = KiteClientFactory.create(
-        access_token=access_token
-    )
-
-    market_data = KiteMarketDataProvider(kite)
-
-    order_executor = OrderExecutor(kite)
-
-    # Initialize Strategy Engine
-    engine = EMAConditionalStrategyEngine(
-        market_data,
-        order_executor,
-        storage
-    )
-
-    # Background Worker
-    worker = WorkerEngine(
-        engine,
-        interval_seconds=Config.SCHEDULE_INTERVAL_SECONDS
-    )
-
-    # Register Blueprints
+    # Register Auth Blueprint (always available)
     app.register_blueprint(
         create_auth_blueprint(storage),
         url_prefix="/auth"
     )
 
-    app.register_blueprint(
-        create_strategy_blueprint(engine, storage),
-        url_prefix="/strategy"
-    )
-
     # Health Endpoint
     @app.route("/worker/health", methods=["GET"])
     def health():
-        return jsonify({
+        payload = {
             "status": "ok",
             "interval_seconds": Config.SCHEDULE_INTERVAL_SECONDS
-        })
+        }
+        if worker:
+            payload.update(worker.status())
+        return jsonify(payload)
 
-    # Start Worker
-    worker.start()
+    # Skip trading engine initialization during migrations
+    if os.environ.get("FLASK_SKIP_WORKER") != "1":
+
+        with app.app_context():
+            access_token = storage.get_access_token("default")
+
+        kite = KiteClientFactory.create(
+            access_token=access_token
+        )
+
+        market_data = KiteMarketDataProvider(kite)
+
+        order_executor = OrderExecutor(kite)
+
+        # Initialize Strategy Engine
+        engine = EMAConditionalStrategyEngine(
+            market_data,
+            order_executor,
+            storage
+        )
+
+        # Register Strategy Blueprint
+        app.register_blueprint(
+            create_strategy_blueprint(engine, storage),
+            url_prefix="/strategy"
+        )
+
+        app.register_blueprint(
+            create_api_blueprint(engine, market_data, order_executor, worker)
+        )
+
+        # Background Worker
+        worker = WorkerEngine(
+            engine,
+            interval_seconds=Config.SCHEDULE_INTERVAL_SECONDS
+        )
+
+        worker.start()
 
     return app
 

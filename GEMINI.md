@@ -1,630 +1,657 @@
-# SmartTradeBot – EMA Based Conditional Trading Strategy
+# SmartTradeBot – Conditional Trading Engine
 
-## Functional Specification & Business Requirements Document (Version 1.0)
-
----
-
-# 1. Document Information
-
-| Item             | Details                                    |
-| ---------------- | ------------------------------------------ |
-| Project          | SmartTradeBot                              |
-| Module           | EMA Conditional Strategy Engine            |
-| Version          | 1.0                                        |
-| Prepared By      | Basanta Kumar Swain                        |
-| Technology Stack | Python, Flask, React, Zerodha Kite Connect |
-| Broker           | Zerodha                                    |
-| Scheduler        | APScheduler                                |
-| Database         | MySQL                                      |
-| Last Updated     | June 2026                                  |
+## Functional & Technical Development Specification (Version 2.0)
 
 ---
 
-# 2. Objective
+# 1. Project Overview
 
-Develop an automated trading system capable of:
+SmartTradeBot is a Zerodha-integrated automated trading platform that allows users to:
 
-1. Monitoring stocks continuously.
-2. Identifying buying opportunities using EMA-based conditions.
-3. Executing buy orders automatically during predefined market timings.
-4. Managing exits using staged profit booking.
-5. Calculating weighted average purchase prices dynamically.
-6. Maintaining execution history and performance metrics.
-
----
-
-# 3. Strategy Overview
-
-The strategy consists of two major components:
-
-### Entry Engine
-
-Responsible for identifying buying opportunities.
-
-### Exit Engine
-
-Responsible for staged profit booking.
+* Place manual orders.
+* Create conditional orders.
+* Execute EMA-based automated strategies.
+* Track portfolio and positions.
+* Monitor order execution status.
+* Automate profit booking through staged exits.
 
 ---
 
-# 4. Buying Strategy
+# 2. Core Modules
 
-## 4.1 Buy Criteria
+The system shall consist of the following modules:
 
-A buy signal shall be generated when:
+1. Authentication Module
+2. Dashboard Module
+3. Portfolio Module
+4. Order Management Module
+5. Conditional Order Engine
+6. EMA Strategy Engine
+7. Worker Engine
+8. Execution Engine
+9. Notification Engine
+10. Audit & Reporting Module
 
-```text
-Daily candle closes below configured EMA.
+---
+
+# 3. Authentication Module
+
+Broker: Zerodha Kite Connect
+
+### Features
+
+* Login via Zerodha.
+* Request token exchange.
+* Access token storage.
+* Session management.
+* Logout.
+
+---
+
+# 4. Dashboard Module
+
+URL:
+
+```
+/dashboard
+```
+
+Displays:
+
+### Worker Status
+
+* Running
+* Stopped
+* Last execution time
+
+### Portfolio Summary
+
+* Holdings
+* Positions
+* Today's P&L
+* Total Investment
+
+### Live Orders
+
+Display:
+
+| Symbol | Type | Qty | Status | Price |
+
+Statuses:
+
+* OPEN
+* COMPLETE
+* REJECTED
+* CANCELLED
+
+### User Profile
+
+Display:
+
+* User Name
+* Email
+* Zerodha Client ID
+
+---
+
+# 5. Manual Order Module
+
+User can place:
+
+### BUY Order
+
+Inputs:
+
+* Symbol
+* Quantity
+
+### SELL Order
+
+Inputs:
+
+* Symbol
+* Quantity
+
+Execution:
+
+```
+Frontend
+↓
+POST /orders/place
+↓
+OrderExecutor
+↓
+Kite Connect
+↓
+Exchange
 ```
 
 ---
 
-## 4.2 EMA Configuration
+# 6. Conditional Order Engine
 
-| Parameter   | Value        |
-| ----------- | ------------ |
-| EMA Period  | Configurable |
-| Default EMA | 100          |
+URL:
+
+```
+/conditional-orders
+```
+
+Purpose:
+
+Queue orders until conditions become true.
+
+---
+
+# 7. Conditional Order Types
+
+Supported conditions:
+
+### PRICE_ABOVE
 
 Example:
 
-```text
-EMA(100)
+```
+BUY INFY
+when price > 1800
 ```
 
 ---
 
-## 4.3 Entry Time Window
-
-Orders shall only be placed during a configurable time window.
-
-Default values:
-
-| Parameter      | Value |
-| -------------- | ----- |
-| Buy Start Time | 15:15 |
-| Buy End Time   | 15:30 |
+### PRICE_BELOW
 
 Example:
 
-```text
-15:15 PM ≤ Current Time ≤ 15:30 PM
+```
+BUY INFY
+when price < 1700
 ```
 
 ---
 
-## 4.4 Buy Execution Logic
-
-Buy order shall be executed only if:
-
-```text
-Condition 1:
-Daily candle closes below EMA.
-
-AND
-
-Condition 2:
-Current market time falls within buy window.
-
-AND
-
-Condition 3:
-Strategy is active.
-
-AND
-
-Condition 4:
-Risk limits are not breached.
-```
-
----
-
-# 5. Position Accumulation
-
-The strategy supports multiple buy executions.
+### EMA_BELOW
 
 Example:
 
-| Purchase Price | Quantity |
+```
+BUY INFY
+when Daily Close < EMA(100)
+```
+
+---
+
+### EMA_ABOVE
+
+Example:
+
+```
+SELL INFY
+when Daily Close > EMA(100)
+```
+
+---
+
+# 8. Conditional Order States
+
+Status values:
+
+```
+WAITING
+TRIGGERED
+EXECUTED
+CANCELLED
+FAILED
+```
+
+---
+
+# 9. Conditional Order Inputs
+
+| Field          | Required |
 | -------------- | -------- |
-| ₹180           | 100      |
-| ₹200           | 50       |
-| ₹160           | 75       |
-| ₹120           | 75       |
+| Symbol         | Yes      |
+| Action         | Yes      |
+| Condition      | Yes      |
+| Quantity       | Yes      |
+| Trigger Price  | Optional |
+| EMA Period     | Optional |
+| Buy Start Time | Optional |
+| Buy End Time   | Optional |
 
 ---
 
-# 6. Weighted Average Price Calculation
+# 10. EMA Entry Strategy
 
-Average purchase price shall be calculated as:
+Buy Condition:
 
-```text
+```
+Daily Close < EMA(100)
+```
+
+AND
+
+```
+15:15 ≤ Current Time ≤ 15:30
+```
+
+---
+
+Default:
+
+```
+EMA = 100
+Buy Start = 15:15
+Buy End = 15:30
+```
+
+---
+
+# 11. Position Tracking
+
+Track every buy.
+
+Example:
+
+| Price | Qty |
+| ----- | --- |
+| 180   | 100 |
+| 200   | 50  |
+| 160   | 75  |
+| 120   | 75  |
+
+---
+
+# 12. Average Price Calculation
+
+Formula:
+
+```
 Average Price =
 Σ(Buy Price × Quantity)
 ÷
 Σ(Quantity)
 ```
 
----
+Example:
 
-## Example
-
-```text
-(180×100 + 200×50 + 160×75 + 120×75)
+```
+(180×100)+(200×50)+(160×75)+(120×75)
 
 =
 
 49,000
-```
 
-Total Quantity:
+÷
 
-```text
 300
-```
 
-Average Price:
+=
 
-```text
 163.33
 ```
 
 ---
 
-# 7. Selling Strategy
+# 13. Profit Booking Engine
 
-Profit booking shall occur in three stages.
+Stage 1:
 
----
-
-# Stage 1 Exit
-
-## Trigger
-
-```text
+```
 Average Price + 10%
 ```
 
----
+Sell:
 
-## Quantity
-
-```text
-50% of total available quantity.
+```
+50% of total quantity
 ```
 
 ---
 
-## Example
+Stage 2:
 
-Average Price:
-
-```text
-163.33
 ```
-
-Target:
-
-```text
-163.33 × 1.10
-
-=
-
-179.66
-```
-
-Quantity Sold:
-
-```text
-150 Shares
-```
-
----
-
-# Stage 2 Exit
-
-## Trigger
-
-```text
 Average Price + 20%
 ```
 
----
+Sell:
 
-## Quantity
-
-```text
-50% of remaining quantity.
 ```
-
-Remaining Quantity:
-
-```text
-150 Shares
-```
-
-Quantity Sold:
-
-```text
-75 Shares
-```
-
-Target:
-
-```text
-163.33 × 1.20
-
-=
-
-196.00
+50% of remaining quantity
 ```
 
 ---
 
-# Stage 3 Exit
+Stage 3:
 
-## Trigger
-
-```text
+```
 Average Price + 30%
 ```
 
----
+Sell:
 
-## Quantity
-
-```text
-All remaining quantity.
 ```
-
-Remaining Quantity:
-
-```text
-75 Shares
-```
-
-Target:
-
-```text
-163.33 × 1.30
-
-=
-
-212.33
+All remaining quantity
 ```
 
 ---
 
-# 8. Exit Sequence Example
+# 14. Stop Loss Engine
 
-| Stage   | Trigger  | Quantity  |
-| ------- | -------- | --------- |
-| Stage 1 | Avg +10% | 150       |
-| Stage 2 | Avg +20% | 75        |
-| Stage 3 | Avg +30% | Remaining |
+Trigger:
 
----
+```
+Average Price − Stop Loss %
+```
 
-# 9. Risk Management
+Default:
 
-The system shall enforce the following controls.
+```
+15%
+```
 
----
+Action:
 
-## Stop Loss
-
-| Parameter | Default |
-| --------- | ------- |
-| Stop Loss | 15%     |
-
-Logic:
-
-```text
-Sell entire position if price falls below average price by configured percentage.
+```
+Sell entire remaining position.
 ```
 
 ---
 
-## Maximum Position Size
+# 15. Worker Engine
 
-| Parameter        | Default     |
-| ---------------- | ----------- |
-| Maximum Quantity | 1000 Shares |
+Runs every:
 
----
-
-## Maximum Capital Allocation
-
-| Parameter          | Default |
-| ------------------ | ------- |
-| Capital Allocation | ₹50,000 |
-
----
-
-## Maximum Daily Loss
-
-| Parameter        | Default |
-| ---------------- | ------- |
-| Daily Loss Limit | ₹5,000  |
-
----
-
-# 10. Strategy Status
-
-Each strategy shall maintain the following states.
-
-| Status    |
-| --------- |
-| ACTIVE    |
-| PAUSED    |
-| STOPPED   |
-| COMPLETED |
-
----
-
-# 11. Worker Engine
-
-A background worker shall execute periodically.
-
----
-
-## Frequency
-
-```text
-Every 15 Seconds
+```
+15 seconds
 ```
 
-Configurable:
+Workflow:
 
-```text
-SMARTTRADEBOT_SCHEDULE_INTERVAL_SECONDS
+```
+Load waiting orders
+
+FOR each order
+
+    Get market data
+
+    Evaluate condition
+
+    IF TRUE
+
+        Execute order
+
+        Update status
+
+END
 ```
 
 ---
 
-# 12. Worker Processing Flow
+# 16. Market Data Module
 
-```text
-FOR EACH ACTIVE STRATEGY
+Uses:
 
-    Retrieve Market Data
+```
+kite.ltp()
+kite.historical_data()
+```
 
-    Evaluate Buy Conditions
+Future:
 
-    IF Buy Conditions True
-
-        Place Buy Order
-
-        Update Position
-
-    END IF
-
-    Calculate Average Price
-
-    Evaluate Stage 1 Target
-
-    Evaluate Stage 2 Target
-
-    Evaluate Stage 3 Target
-
-    Evaluate Stop Loss
-
-    Execute Orders
-
-    Update Metrics
-
-END FOR
+```
+KiteTicker WebSocket
 ```
 
 ---
 
-# 13. Database Table
+# 17. Database Tables
 
-Table Name:
+## users
 
-```text
-ema_strategies
+```
+id
+zerodha_user_id
+email
+created_at
+updated_at
 ```
 
 ---
 
-## Fields
+## conditional_orders
 
-| Column                     |
-| -------------------------- |
-| id                         |
-| user_id                    |
-| symbol                     |
-| ema_period                 |
-| buy_time_start             |
-| buy_time_end               |
-| stage_1_profit_percent     |
-| stage_2_profit_percent     |
-| stage_3_profit_percent     |
-| stop_loss_percent          |
-| max_position_size          |
-| max_capital_allocation     |
-| max_daily_loss             |
-| is_active                  |
-| status                     |
-| current_position_quantity  |
-| current_position_avg_price |
-| execution_history          |
-| total_buy_orders           |
-| total_sell_orders          |
-| total_pnl                  |
-| last_activity_at           |
-| created_at                 |
-| updated_at                 |
-
----
-
-# 14. Execution History
-
-The system shall maintain complete execution history.
-
-Examples:
-
-```json
-[
-    {
-        "type":"BUY",
-        "price":180,
-        "quantity":100
-    },
-    {
-        "type":"SELL",
-        "price":179.66,
-        "quantity":150,
-        "stage":"STAGE_1"
-    }
-]
+```
+id
+user_id
+symbol
+action
+condition_type
+trigger_price
+ema_period
+quantity
+status
+created_at
+updated_at
+executed_at
 ```
 
 ---
 
-# 15. APIs Required
+## positions
+
+```
+id
+user_id
+symbol
+quantity
+average_price
+invested_amount
+current_pnl
+created_at
+updated_at
+```
 
 ---
 
-## Activate Strategy
+## executions
 
-```http
+```
+id
+order_id
+symbol
+action
+quantity
+price
+stage
+kite_order_id
+executed_at
+```
+
+---
+
+## ema_strategies
+
+```
+id
+user_id
+symbol
+ema_period
+buy_time_start
+buy_time_end
+stage_1_profit_percent
+stage_2_profit_percent
+stage_3_profit_percent
+stop_loss_percent
+status
+created_at
+updated_at
+```
+
+---
+
+# 18. APIs
+
+Authentication:
+
+```
+GET  /auth/login
+GET  /auth/callback
+POST /auth/logout
+```
+
+Dashboard:
+
+```
+GET /dashboard
+GET /portfolio
+GET /orders/live
+```
+
+Conditional Orders:
+
+```
+POST /conditional-orders
+GET  /conditional-orders
+DELETE /conditional-orders/{id}
+```
+
+Strategies:
+
+```
 POST /strategy/activate
-```
-
----
-
-## Deactivate Strategy
-
-```http
 POST /strategy/deactivate
+GET  /strategy/status
 ```
 
----
+Worker:
 
-## Strategy Status
-
-```http
-GET /strategy/status
 ```
-
----
-
-## Worker Health
-
-```http
 GET /worker/health
 ```
 
----
+Orders:
 
-# 16. Frontend Requirements
-
-Dashboard shall display:
-
-```text
-Worker Status
-
-Active Strategies
-
-Position Summary
-
-Strategy Metrics
-
-Quick Actions
+```
+POST /orders/place
+POST /orders/cancel
 ```
 
 ---
 
-# 17. Audit Requirements
+# 19. Frontend Pages
 
-The following actions shall be logged.
-
-```text
-Strategy Activated
-
-Strategy Paused
-
-Buy Executed
-
-Sell Executed
-
-Stop Loss Triggered
-
-Strategy Completed
+```
+/login
+/dashboard
+/orders
+/conditional-orders
+/portfolio
+/profile
 ```
 
 ---
 
-# 18. Future Enhancements
+# 20. Notification Engine
 
-The system should support:
+Future Support:
 
-```text
-Trailing Stop Loss
+* Telegram Alerts
+* Email Alerts
+* Push Notifications
 
-Backtesting Engine
+Events:
 
-Multiple Brokers
+```
+Order Executed
+Conditional Triggered
+Stop Loss Hit
+Profit Booked
+Worker Failure
+```
 
+---
+
+# 21. Audit Requirements
+
+Log:
+
+```
+Login
+Logout
+Order Creation
+Order Execution
+Strategy Activation
+Strategy Deactivation
+Worker Execution
+Errors
+```
+
+---
+
+# 22. Future Roadmap
+
+Phase 2:
+
+```
+KiteTicker WebSocket
 Paper Trading
+Backtesting
+Multi-user Support
+Multi-stock Scanner
+Trailing Stop Loss
+```
 
-Notifications
+Phase 3:
 
-Telegram Alerts
-
-Email Alerts
-
-Multiple EMA Strategies
-
-WebSocket Based Tick Processing
+```
+AI Signal Generation
+Portfolio Optimization
+Risk Scoring
+ML-based Exit Engine
 ```
 
 ---
 
-# 19. Acceptance Criteria
+# 23. Acceptance Criteria
 
-The strategy implementation shall be considered complete when:
+The system is complete when:
 
-```text
-✓ Buy signals are generated correctly.
+✓ User logs in successfully.
 
-✓ Orders are placed only during configured time window.
+✓ Manual orders execute.
 
-✓ Average price calculation is accurate.
+✓ Conditional orders trigger correctly.
 
-✓ Stage 1 sell executes correctly.
+✓ EMA strategy triggers correctly.
 
-✓ Stage 2 sell executes correctly.
-
-✓ Stage 3 sell executes correctly.
+✓ Multi-stage selling works.
 
 ✓ Stop loss works.
 
-✓ Risk limits are enforced.
+✓ Worker executes every interval.
 
-✓ Worker executes every configured interval.
+✓ Dashboard reflects live state.
 
-✓ Execution history is maintained.
+✓ Audit logs are maintained.
 
-✓ Dashboard reflects real-time strategy state.
-```
+✓ Notifications are generated.
 
 ---
 
-# 20. Conclusion
+# 24. Recommended Redevelopment Approach
 
-SmartTradeBot EMA Strategy provides a disciplined rule-based approach to trading by combining:
+Build in this order:
 
-• Trend-based entry using EMA.
+1. Authentication
+2. Dashboard
+3. Manual Orders
+4. Conditional Order Engine
+5. Position Tracking
+6. Worker Engine
+7. EMA Strategy Engine
+8. Profit Booking Engine
+9. Notifications
+10. Backtesting
 
-• Controlled buying within predefined market windows.
-
-• Weighted-average profit management.
-
-• Multi-stage profit realization.
-
-• Automated risk controls.
-
-The strategy is designed to eliminate emotional decision-making and support scalable automated execution using Zerodha APIs.
+```
+```
