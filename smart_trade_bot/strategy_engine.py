@@ -270,7 +270,7 @@ def create_strategy_blueprint(engine, storage):
             user_id=1, # Mocked for now
             symbol=data['symbol'].upper(),
             ema_period=data.get('ema_period', 100),
-            quantity=data['quantity'],
+            quantity=data.get('quantity', 1),
             stage_1_profit_percent=data.get("stage_1_profit_percent", 0.10),
             stage_2_profit_percent=data.get("stage_2_profit_percent", 0.20),
             stage_3_profit_percent=data.get("stage_3_profit_percent", 0.30),
